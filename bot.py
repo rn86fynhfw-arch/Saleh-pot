@@ -43,7 +43,7 @@ def send_telegram_alert(message):
 # محرك التحليل الأساسي
 def analyze_market_engine(pair):
   # هنا كود التحليل الفني والمنطق الخاص بك
-  print( جاري فحص الزوج: {pair})
+  print(f"جاري فحص الزوج: {pair}")
 
 
 # إعداد خادم Flask Keep-Alive

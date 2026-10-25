@@ -156,37 +156,25 @@ def analyze_market_engine(pair):
         print(f"تم إرسال إشارة حية للزوج: {pair} -> {signal}")
 
 if __name__ == "__main__":
-    print("🚀 محرك الإشارات الحية المباشرة لأزواج الـ OTC يعمل الآن بنجاح...")
-    send_telegram_alert("🚀 تم تفعيل بوت إشارات OTC الحي المباشر بنجاح دون انقطاع!")
+  # 1. تشغيل حلقات بوت التداول في الخلفية
+  import threading
 
+  def trading_loop():
+    print("🚀 بدء تفعيل بوت إشارات الأزوج المباشرة")
+    send_telegram_alert("🚀 تفعيل بوت إشارات الأزوج المباشرة")
     while True:
-        for pair in TARGET_PAIRS:
-            try:
-                analyze_market_engine(pair)
-            except Exception:
-                pass
-            time.sleep(3) # زيادة الفاصل الزمني قليلاً لحماية الاتصال
-        time.sleep(45)
-from flask import Flask
-import threading
-import os
+      for pair in TARGET_PAIRS:
+        try:
+          analyze_market_engine(pair)
+        except Exception:
+          pass
+        time.sleep(3)
+      time.sleep(45)
 
-app = Flask(__name__)
+  t_bot = threading.Thread(target=trading_loop)
+  t_bot.daemon = True
+  t_bot.start()
 
-
-@app.route('/')
-def home():
-    return "I am alive! Bot is running 24/7!"
-
-def run():
-    port = int(os.environ.get('PORT', 8080))
-    app.run(host='0.0.0.0', port=port)
-
-def keep_alive():
-    t = threading.Thread(target=run)
-    t.daemon = True
-    t.start()
-
-if __name__ == '__main__':
-    keep_alive()
-    # الكود الأساسي لبوت التداول الخاص بك يعمل هنا في الخلفية
+  # 2. تشغيل خادم Flask Keep-Alive في الخيط الرئيسي لمنصة Render
+  port = int(os.environ.get("PORT", 8080))
+  app.run(host="0.0.0.0", port=port)

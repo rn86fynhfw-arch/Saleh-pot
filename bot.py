@@ -167,3 +167,25 @@ if __name__ == "__main__":
                 pass
             time.sleep(3) # زيادة الفاصل الزمني قليلاً لحماية الاتصال
         time.sleep(45)
+from flask import Flask
+import threading
+import os
+
+app = Flask('')
+
+@app.route('/')
+def home():
+    return "I am alive! Bot is running 24/7!"
+
+def run():
+    port = int(os.environ.get('PORT', 8080))
+    app.run(host='0.0.0.0', port=port)
+
+def keep_alive():
+    t = threading.Thread(target=run)
+    t.daemon = True
+    t.start()
+
+if __name__ == '__main__':
+    keep_alive()
+    # الكود الأساسي لبوت التداول الخاص بك يعمل هنا في الخلفية

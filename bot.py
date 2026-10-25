@@ -1,138 +1,132 @@
 import os
 import requests
 from flask import Flask, jsonify, request
+import numpy as np
+import pandas as pd
 
 app = Flask(__name__)
 
-# إعدادات بوت تيليجرام (تأكد من إضافتها في Environment Variables على Render)
-TELEGRAM_BOT_TOKEN = os.environ.get("8935469966:AAHeJ48flDjsmaHq-zui6HwVMFzCHNtMNpY", "YOUR_BOT_TOKEN_HERE")
-TELEGRAM_CHAT_ID = os.environ.get("1185014094", "YOUR_CHAT_ID_HERE")
+# إعدادات بوت تليجرام (يمكنك تعديلها هنا مباشرة أو تركها تسحب من متغيرات بيئة Render)
+TELEGRAM_BOT_TOKEN = os.environ.get("8935469966:AAHeJ48flDjsmaHq-zui6HwVMFzCHNtMNpY", "ضع_التوكن_هنا")
+TELEGRAM_CHAT_ID = os.environ.get("1185014094", "ضع_الآيدي_هنا")
+
+# قائمة أزواج العملات (OTC) المضافة مسبقاً
+OTC_PAIRS = [
+    "EUR/USD OTC",
+    "GBP/USD OTC",
+    "AUD/USD OTC",
+    "USD/CAD OTC",
+    "USD/JPY OTC",
+    "EUR/GBP OTC",
+    "AUD/CAD OTC",
+    "AED/CNY OTC",
+]
+
+
+def send_telegram_message(message):
+  url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+  payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}
+  try:
+    response = requests.post(url, json=payload)
+    return response.json()
+  except Exception as e:
+    print(f"Error sending message: {e}")
+    return None
 
 
 @app.route("/")
 def home():
-  return "I am alive! Webhook Bot for Pocket Option OTC is running 24/7!"
-
-
-# --- دوال حساب المؤشرات المتقدمة (ZigZag, MACD, Volume, Supply/Demand) ---
-
-
-def calculate_macd(prices, fast_period=12, slow_period=26, signal_period=9):
-  if len(prices) < slow_period + signal_period:
-    return 0.0, 0.0
-
-  def ema(data, period):
-    multiplier = 2 / (period + 1)
-    ema_vals = [sum(data[:period]) / period]
-    for price in data[period:]:
-      ema_vals.append((price - ema_vals[-1]) * multiplier + ema_vals[-1])
-    return ema_vals
-
-  # حساب مبسط لـ MACD Line والـ Signal Line
-  fast_ema = ema(prices, fast_period)
-  slow_ema = ema(prices, slow_period)
-  min_len = min(len(fast_ema), len(slow_ema))
-
-  macd_line = [
-      f - s for f, s in zip(fast_ema[-min_len:], slow_ema[-min_len:])
-  ]
-  if len(macd_line) < signal_period:
-    return round(macd_line[-1], 5), 0.0
-
-  signal_line = ema(macd_line, signal_period)
-  return round(macd_line[-1], 5), round(signal_line[-1], 5)
-
-
-def detect_zigzag_and_levels(highs, lows, closes):
-  """تقدير مبسط لحركة الزجزاج ومناطق العرض والطلب (الدعم والمقاومة اللحظية)"""
-  if not highs or not lows:
-    return "غير متوفر", "دعم/مقاومة قريبة"
-
-  recent_high = max(highs[-10:])
-  recent_low = min(lows[-10:])
-
-  # تحديد اتجاه الزجزاج التقريبي بناءً على القمم والقيعان الأخيرة
-  zigzag_trend = (
-      "صاعد ↗️" if closes[-1] > closes[-5] else "هابط ↘️"
-  )
-  supply_demand = (
-      f"طلب: {round(recent_low, 5)} | عرض: {round(recent_high, 5)}"
+  return (
+      "Bot is active and running! Supported OTC Pairs:"
+      f" {', '.join(OTC_PAIRS)}"
   )
 
-  return zigzag_trend, supply_demand
+
+# حساب مؤشر RSI
+def calculate_rsi(prices, period=14):
+  df = pd.DataFrame({"price": prices})
+  delta = df["price"].diff()
+  gain = delta.where(delta > 0, 0).rolling(window=period).mean()
+  loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
+  rs = gain / loss
+  rsi = 100 - (100 / (1 + rs))
+  return rsi.iloc[-1]
 
 
-@app.route("/webhook", methods=["POST"])
-def webhook():
-  try:
-    data = request.json
-    if not data:
-      return jsonify({"status": "error", "message": "No data received"}), 400
+# حساب مؤشر MACD
+def calculate_macd(prices, slow=26, fast=12, signal=9):
+  df = pd.DataFrame({"price": prices})
+  exp1 = df["price"].ewm(span=fast, adjust=False).mean()
+  exp2 = df["price"].ewm(span=slow, adjust=False).mean()
+  macd = exp1 - exp2
+  signal_line = macd.ewm(span=signal, adjust=False).mean()
+  hist = macd - signal_line
+  return macd.iloc[-1], signal_line.iloc[-1], hist.iloc[-1]
 
-    # استقبال البيانات الأساسية
-    pair = data.get("pair", "EUR/USD OTC")
-    signal = data.get("signal", "CALL")
-    price = data.get("price", "N/A")
-    timeframe = data.get("timeframe", "1m")
-    timestamp = data.get("timestamp", "")
 
-    # استقبال أو حساب المؤشرات المتقدمة (MACD, Volume, ZigZag, Supply/Demand)
-    volume = data.get("volume", "عالي / طبيعي")
-    
-    # إذا تم إرسال تاريخ أسعار، نحسب MACD والزجزاج برمجياً، أو نستقبلها جاهزة
-    raw_prices = data.get("prices", [])
-    raw_highs = data.get("highs", [])
-    raw_lows = data.get("lows", [])
+# تحديد اتجاه ZigZag المبسط
+def detect_zigzag(prices):
+  if len(prices) < 5:
+    return "NEUTRAL"
+  last_few = prices[-5:]
+  if last_few[-1] > last_few[-2] > last_few[-3]:
+    return "UP"
+  elif last_few[-1] < last_few[-2] < last_few[-3]:
+    return "DOWN"
+  return "NEUTRAL"
 
-    if raw_prices and len(raw_prices) > 30:
-      macd_val, signal_val = calculate_macd(raw_prices)
-      macd_str = f"MACD: {macd_val} | Signal: {signal_val}"
-    else:
-      macd_str = data.get("macd", "مستقر (متوافق مع الاتجاه)")
 
-    if raw_highs and raw_lows and raw_prices:
-      zigzag_trend, supply_demand = detect_zigzag_and_levels(
-          raw_highs, raw_lows, raw_prices
-      )
-    else:
-      zigzag_trend = data.get("zigzag", "اتجاه لحظي نشط")
-      supply_demand = data.get("supply_demand", "مناطق قوية قيد الاختبار")
+@app.route("/analyze", methods=["POST"])
+def analyze():
+  data = request.json
+  pair = data.get("pair", "EUR/USD OTC")
 
-    # صياغة رسالة تيليجرام تفصيلية واحترافية
-    message = (
-        f"🚨 **تنبيه إشارة تداول احترافية** 🚨\n\n"
-        f"📊 **الزوج:** {pair}\n"
-        f"⏱ **الفريم:** {timeframe}\n"
-        f"🎯 **الإتجاه:** {signal}\n"
-        f"💰 **السعر الحالي:** {price}\n\n"
-        f"📈 **مؤشر MACD:** {macd_str}\n"
-        f"📉 **مؤشر الزجزاج (ZigZag):** {zigzag_trend}\n"
-        f"📦 **حجم التداول (Volume):** {volume}\n"
-        f"🛡 **مناطق العرض والطلب:** {supply_demand}\n\n"
-        f"⏰ **الوقت:** {timestamp}"
+  # التحقق من أن الزوج ضمن القائمة المعتمدة
+  if pair not in OTC_PAIRS:
+    # يمكنك السماح به أو وضعه كافتراضي
+    pass
+
+  prices = data.get("prices", [])
+  volumes = data.get("volumes", [])
+
+  if len(prices) < 30:
+    return (
+        jsonify({
+            "status": "error",
+            "message": "البيانات أقل من 30 شمعة",
+        }),
+        400,
     )
 
-    # إرسال الرسالة إلى تيليجرام
-    send_to_telegram(message)
+  rsi = calculate_rsi(prices)
+  macd, signal_line, hist = calculate_macd(prices)
+  zigzag = detect_zigzag(prices)
 
-    return jsonify({"status": "success", "message": "Signal sent with indicators"}), 200
+  vol_avg = np.mean(volumes[-10:]) if len(volumes) >= 10 else 1
+  current_vol = volumes[-1] if len(volumes) > 0 else 1
+  high_volume = current_vol > (vol_avg * 1.2)
 
-  except Exception as e:
-    return jsonify({"status": "error", "message": str(e)}), 500
+  # منطق الإشارة بناءً على المؤشرات
+  signal_result = "لا توجد فرصة ⏳"
+  if rsi < 45 and hist > 0 and zigzag == "UP":
+    signal_result = "🚀 صعود (CALL)"
+  elif rsi > 55 and hist < 0 and zigzag == "DOWN":
+    signal_result = "🔻 هبوط (PUT)"
 
+  message = (
+      f"📊 *تحليل فريم الدقيقة (OTC)*\n"
+      f"🌐 الزوج: `{pair}`\n\n"
+      f"• RSI: `{rsi:.2f}`\n"
+      f"• MACD Hist: `{hist:.4f}`\n"
+      f"• ZigZag: `{zigzag}`\n"
+      f"• Volume: `{'مرتفع 🟢' if high_volume else 'عادي ⚪'}`\n\n"
+      f"🎯 *النتيجة:* {signal_result}"
+  )
 
-def send_to_telegram(text):
-  url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-  payload = {
-      "chat_id": TELEGRAM_CHAT_ID,
-      "text": text,
-      "parse_mode": "Markdown",
-  }
-  try:
-    requests.post(url, json=payload, timeout=5)
-  except Exception as e:
-    print(f"Error sending to telegram: {e}")
+  send_telegram_message(message)
+  return jsonify({"status": "success", "pair": pair, "signal": signal_result})
 
 
 if __name__ == "__main__":
-  app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+  port = int(os.environ.get("PORT", 5000))
+  app.run(host="0.0.0.0", port=port)

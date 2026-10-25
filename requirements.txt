@@ -2,3 +2,5 @@ requests
 pandas
 numpy
 flask
+gunicorn
+apscheduler

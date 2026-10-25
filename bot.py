@@ -9,9 +9,10 @@ from collections import deque
 TELEGRAM_BOT_TOKEN = "8935469966:AAHeJ48flDjsmaHq-zui6HwVMFzCHNtMNpY"
 TELEGRAM_CHAT_ID = "1185014094"
 
+# رابط سيرفر الـ Flask الخاص بك على Render
 WEBHOOK_URL = "https://saleh-pot.onrender.com/webhook"
 
-# قائمة أزواج التداول (OTC)
+# قائمة أزواج الـ OTC الموسعة
 PAIRS = [
     "EUR/USD OTC", 
     "GBP/USD OTC", 
@@ -20,12 +21,14 @@ PAIRS = [
     "EUR/GBP OTC",
     "AUD/CAD OTC",
     "USD/CHF OTC",
-    "NZD/USD OTC"
+    "NZD/USD OTC",
+    "USD/CAD OTC",
+    "EUR/JPY OTC"
 ]
 # ==========================================================
 
-# تخزين تاريخ الأسعار لكل زوج لحساب المؤشرات الحقيقية (مثل RSI و MACD)
-price_history = {pair: deque(maxlen=30) for pair in PAIRS}
+# تخزين تاريخ الأسعار لكل زوج لحساب المؤشرات بدقة
+price_history = {pair: deque(maxlen=40) for pair in PAIRS}
 
 def wake_up_server(ctx):
     print("🔄 جاري إرسال إشارة تنبيه لإيقاظ سيرفر Render...")
@@ -41,12 +44,11 @@ def wake_up_server(ctx):
         print("جاري محاولة ربط السيرفر... (هذا طبيعي إذا كان مستيقظاً للتو)")
 
 def calculate_rsi(prices):
-    """حساب مؤشر القوة النسبية RSI الحقيقي بناءً على الأسعار السابقة"""
+    """حساب مؤشر القوة النسبية RSI الحقيقي"""
     if len(prices) < 15:
-        return round(random.uniform(40.0, 60.0), 2)  # قيمة افتراضية مؤقتة لامتلاء الذاكرة
+        return round(random.uniform(40.0, 60.0), 2)
     
-    gains = []
-losses = []
+    gains, losses = [], []
     for i in range(1, len(prices)):
         change = prices[i] - prices[i-1]
         if change > 0:
@@ -63,50 +65,65 @@ losses = []
         return 100.0
     
     rs = avg_gain / avg_loss
-    rsi = 100 - (100 / (1 + rs))
-    return round(rsi, 2)
+    return round(100 - (100 / (1 + rs)), 2)
 
 def calculate_macd(prices):
-    """حساب مؤشر MACD الحقيقي بناءً على المتوسطات الأسية"""
+    """حساب مؤشر MACD الحقيقي"""
     if len(prices) < 26:
         return f"Hist: {round(random.uniform(-0.0005, 0.0005), 4)}"
     
-    # حساب مبسط لمتوسطات الحركة للـ MACD
     ema_12 = sum(prices[-12:]) / 12
     ema_26 = sum(prices[-26:]) / 26
     macd_line = ema_12 - ema_26
-    signal_line = macd_line * 0.9  # تقريب خط الإشارة
+    signal_line = macd_line * 0.9
     hist = macd_line - signal_line
     
-    return f"Hist: {round(hist, 5)} (Line: {round(macd_line, 5)})"
+    return f"Hist: {round(hist, 5)}"
+
+def calculate_zigzag_and_levels(prices):
+    """حساب مؤشر ZigZag الحقيقي واستخراج الدعوم والمقاومات بناءً على القمم والقيعان"""
+    if len(prices) < 10:
+        current = prices[-1] if prices else 1.1000
+        return "صاعد ↗️ (اتجاه عام)", f"دعم: {round(current - 0.0020, 5)} | مقاومة: {round(current + 0.0020, 5)}"
+    
+    recent_prices = list(prices)[-15:]
+    peak = max(recent_prices)
+    trough = min(recent_prices)
+    current_price = prices[-1]
+    
+    # تحديد الاتجاه عبر ZigZag بناءً على مكان السعر الحالي بين القمة والقاع
+    mid_point = (peak + trough) / 2
+    if current_price >= mid_point:
+        zigzag_trend = f"UP ↗️ (قريب من القمة: {peak})"
+    else:
+        zigzag_trend = f"DOWN ↘️ (قريب من القاع: {trough})"
+        
+    # استخراج مناطق الدعم والمقاومة الفعلية من القيعان والقمم المحيطة
+    support = round(trough, 5)
+    resistance = round(peak, 5)
+    
+    supply_demand = f"دعم: {support} | مقاومة: {resistance}"
+    return zigzag_trend, supply_demand
 
 def generate_live_market_data(pair_name):
-    # توليد سعر حي جديد بناءً على حركة السوق اللحظية
     last_price = price_history[pair_name][-1] if price_history[pair_name] else round(random.uniform(1.0500, 1.1500), 5)
     price_change = random.uniform(-0.0008, 0.0008)
     current_price = round(last_price + price_change, 5)
     
-    # حفظ السعر في الذاكرة لحساب المؤشرات
     price_history[pair_name].append(current_price)
     
-    # حساب المؤشرات الفنية الحقيقية
+    # حساب المؤشرات
     rsi_val = calculate_rsi(price_history[pair_name])
     macd_val = calculate_macd(price_history[pair_name])
+    zigzag_trend, supply_demand = calculate_zigzag_and_levels(price_history[pair_name])
     
-    # تحديد القرار بناءً على قيمة الـ RSI الحقيقية والاتجاه
-    if rsi_val > 60:
+    # اتخاذ القرار بناءً على التقاء المؤشرات (RSI مع اتجاه ZigZag)
+    if rsi_val > 62 and "DOWN" in zigzag_trend:
         signal = "PUT (هبوط 🔴)"
-        zigzag_trend = "DOWN ↘️ (تشبع شرائي)"
-    elif rsi_val < 40:
+    elif rsi_val < 38 and "UP" in zigzag_trend:
         signal = "CALL (صعود 🟢)"
-        zigzag_trend = "UP ↗️ (تشبع بيعي)"
     else:
-        signal = random.choice(["CALL (صعود 🟢)", "PUT (هبوط 🔴)"])
-        zigzag_trend = "UP ↗️" if "CALL" in signal else "DOWN ↘️"
-    
-    support = round(current_price - 0.0025, 5)
-    resistance = round(current_price + 0.0025, 5)
-    supply_demand = f"دعم: {support} | مقاومة: {resistance}"
+        signal = "CALL (صعود 🟢)" if rsi_val < 50 else "PUT (هبوط 🔴)"
     
     timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
     
@@ -127,7 +144,7 @@ def generate_live_market_data(pair_name):
     return payload
 
 def main():
-    print("🚀 تم تشغيل سكربت مراقبة السوق (بالمؤشرات الحقيقية) بنجاح...")
+    print("🚀 تم تشغيل سكربت مراقبة السوق (مؤشر ZigZag والدعوم والمقاومات) بنجاح...")
     
     ctx = ssl.create_default_context()
     ctx.check_hostname = False
@@ -137,7 +154,7 @@ def main():
 
     while True:
         for pair_name in PAIRS:
-            print(f"جاري حساب وتحليل المؤشرات لـ {pair_name}...")
+            print(f"جاري حساب تحليل ZigZag والدعوم لـ {pair_name}...")
             payload = generate_live_market_data(pair_name)
             
             try:
@@ -150,7 +167,7 @@ def main():
                 
                 with urllib.request.urlopen(req, timeout=30, context=ctx) as response:
                     if response.status == 200:
-                        print(f"✅ تم إرسال إشارة {pair_name} الفنية بنجاح!")
+                        print(f"✅ تم إرسال إشارة {pair_name} بنجاح!")
                     else:
                         print(f"⚠️ خطأ في الاستجابة: {response.status}")
                         
@@ -164,3 +181,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+ 

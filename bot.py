@@ -7,9 +7,9 @@ from apscheduler.schedulers.background import BackgroundScheduler
 
 app = Flask(__name__)
 
-# إعدادات بوت تليجرام
-TELEGRAM_BOT_TOKEN = os.environ.get("8935469966:AAHeJ48flDjsmaHq-zui6HwVMFzCHNtMNpY", "ضع_التوكن_هنا")
-TELEGRAM_CHAT_ID = os.environ.get("1185014094", "ضع_الآيدي_هنا")
+# ⚠️ ضع التوكن والآيدي الخاص بك هنا بين علامتي التنصيص بدلاً من النصوص الوهمية
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "8935469966:AAHeJ48flDjsmaHq-zui6HwVMFzCHNtMNpY")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "1185014094")
 
 # قائمة أزواج OTC للخيارات الثنائية
 OTC_PAIRS = [
@@ -32,19 +32,16 @@ def send_telegram_message(message):
     }
     try:
         response = requests.post(url, json=payload)
+        print(f"Telegram Response: {response.text}")  # سيطبع الرد في الـ Logs للتأكد من نجاح الإرسال
         return response.json()
     except Exception as e:
         print(f"Error sending message: {e}")
         return None
 
 def fetch_pair_data(pair_name):
-    """
-    محاكاة جلب حركة الأسعار والحجم لفريم الدقيقة لزوج محدد.
-    (توليد بيانات حركية تقريبية تتفاعل مع المؤشرات)
-    """
+    """محاكاة جلب حركة الأسعار والحجم لفريم الدقيقة"""
     np.random.seed()
     base_price = 1.0850 if "USD" in pair_name else 100.0
-    # إنشاء حركة 30 شمعة
     price_changes = np.random.normal(0, 0.0002, 35)
     prices = list(np.cumsum(price_changes) + base_price)
     volumes = list(np.random.randint(100, 500, size=35))

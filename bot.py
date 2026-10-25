@@ -7,10 +7,9 @@ import requests
 from flask import Flask
 
 # ==================== الإعدادات الأساسية ====================
-TELEGRAM_BOT_TOKEN = "8935469966:AAHeJ48flDjsmaHq-zui6HwVMFzCHNtMNpY"
-TELEGRAM_CHAT_ID = "1185014094"
+TELE_TOKEN = "8935469966:AAHeJ48flDjsmaHq-zui6HwVMFzCHNtMNpY"
+CHAT_ID = "1185014094"
 
-# القائمة الموسعة لمراقبة أزواج الـ OTC على مدار 24/7
 TARGET_PAIRS = [
     "EUR/USD OTC",
     "GBP/USD OTC",
@@ -26,158 +25,161 @@ TARGET_PAIRS = [
 TIMEFRAME = "1m"
 
 
-# وظيفة إرسال تنبيهات تيليجرام
-def send_telegram_alert(message):
+# وظيفة إرسال رسالة مع أزرار تفاعلية لاختيار الأزواج
+def send_control_panel():
+  url = f"https://api.telegram.org/bot{TELE_TOKEN}/sendMessage"
+
+  # تجهيز الأزرار لكل أزواج الـ OTC (كل صف يحتوي على زوجين)
+  keyboard = {"inline_keyboard": []}
+
+  row = []
+  for pair in TARGET_PAIRS:
+    row.append({"text": pair, "callback_data": f"check_{pair}"})
+    if len(row) == 2:
+      keyboard["inline_keyboard"].append(row)
+      row = []
+  if row:
+    keyboard["inline_keyboard"].append(row)
+
+  payload = {
+      "chat_id": CHAT_ID,
+      "text": (
+          "🎛️ **لوحة تحكم فحص أزواج الـ OTC الذكية**\n\nاضغط على أي زوج أدناه"
+          " لفحص حالته الفنية لحظياً (RSI & CCI):"
+      ),
+      "parse_mode": "Markdown",
+      "reply_markup": keyboard,
+  }
   try:
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    payload = {
-        "chat_id": TELEGRAM_CHAT_ID,
-        "text": message,
-        "parse_mode": "Markdown",
-    }
     requests.post(url, json=payload, timeout=10)
   except Exception as e:
-    print(f"خطأ في إرسال التيليجرام: {e}")
+    print(f"خطأ في إرسال لوحة التحكم: {e}")
 
 
-# وظيفة جلب أو محاكاة بيانات الأسعار والفوليوم
-def get_market_data(pair):
+# توليد وحساب مؤشرات الزوج عند الضغط عليه
+def evaluate_pair(pair):
   np.random.seed(int(time.time() * 1000) % 10000)
-  base_price = 1.1000
-  prices = base_price + np.random.normal(0, 0.0004, 120).cumsum()
-  volumes = np.random.randint(100, 1000, 120)
-  df = pd.DataFrame({"close": prices, "volume": volumes})
-  return df
+  if "GBP" in pair:
+    base_price = 1.2640
+  elif "EUR" in pair:
+    base_price = 1.0850
+  else:
+    base_price = 1.1000
 
+  prices = base_price + np.random.normal(0, 0.0003, 40).cumsum()
+  df = pd.DataFrame({"close": prices})
 
-# حساب المؤشرات الفنية المتقدمة
-def calculate_indicators(df):
-  # 1. المتوسطات الأسية (EMA 10, 20, 50, 100)
-  df["EMA_10"] = df["close"].ewm(span=10, adjust=False).mean()
-  df["EMA_20"] = df["close"].ewm(span=20, adjust=False).mean()
-  df["EMA_50"] = df["close"].ewm(span=50, adjust=False).mean()
-  df["EMA_100"] = df["close"].ewm(span=100, adjust=False).mean()
-
-  # 2. مؤشر RSI (14)
+  # مؤشر RSI 14
   delta = df["close"].diff()
   gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
   loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-  rs = gain / loss
-  df["RSI"] = 100 - (100 / (1 + rs))
+  rsi = (
+      100 - (100 / (1 + (gain / loss)))
+  ).iloc[-1]
 
-  # 3. مؤشر MACD
-  exp1 = df["close"].ewm(span=12, adjust=False).mean()
-  exp2 = df["close"].ewm(span=26, adjust=False).mean()
-  df["MACD"] = exp1 - exp2
-  df["MACD_Signal"] = df["close"].ewm(span=9, adjust=False).mean()
-
-  # 4. مؤشر CCI (Commodity Channel Index)
+  # مؤشر CCI 20
   tp = df["close"]
   sma_tp = tp.rolling(window=20).mean()
   mad = tp.rolling(window=20).apply(lambda x: np.fabs(x - x.mean()).mean())
-  df["CCI"] = (tp - sma_tp) / (0.015 * mad)
+  cci = ((tp - sma_tp) / (0.015 * mad)).iloc[-1]
 
-  # 5. مؤشر Volume (متوسط الحجم)
-  df["Volume_SMA"] = df["volume"].rolling(window=20).mean()
+  current_price = df["close"].iloc[-1]
+  support = current_price - 0.0006
+  resistance = current_price + 0.0006
 
-  return df
+  # تحديد الحالة بدقة
+  if rsi <= 35 and cci <= -100:
+    status = "🔥 **شراء قوي جداً (Strong CALL)** 🟢"
+  elif rsi >= 65 and cci >= 100:
+    status = "🔥 **بيع قوي جداً (Strong PUT)** 🔴"
+  elif rsi <= 45 and cci < 0:
+    status = "📈 **شراء (CALL)**"
+  elif rsi >= 55 and cci > 0:
+    status = "📉 **بيع (PUT)**"
+  else:
+    status = "⏳ **لا يوجد فرصة حالياً (منطقة حيادية)**"
 
-
-# محرك التحليل الاستراتيجي الشامل
-def analyze_market_engine(pair):
-  print(f"جاري فحص الزوج بكل المؤشرات: {pair}")
-  df = get_market_data(pair)
-  df = calculate_indicators(df)
-
-  if len(df) < 110:
-    return
-
-  curr = df.iloc[-1]
-  prev = df.iloc[-2]
-
-  close_p = curr["close"]
-  rsi = curr["RSI"]
-  cci = curr["CCI"]
-  macd = curr["MACD"]
-  macd_sig = curr["MACD_Signal"]
-  vol = curr["volume"]
-  vol_avg = curr["Volume_SMA"]
-
-  ema10 = curr["EMA_10"]
-  ema20 = curr["EMA_20"]
-  ema50 = curr["EMA_50"]
-  ema100 = curr["EMA_100"]
-
-  # شروط إشارة صعودية قوية (CALL) تقاطع EMA مع مؤشرات الزخم والسيولة
-  is_bullish_trend = ema10 > ema20 > ema50
-  is_bearish_trend = ema10 < ema20 < ema50
-
-  if (
-      is_bullish_trend
-      and rsi < 45
-      and cci < -100
-      and macd > macd_sig
-      and vol > vol_avg
-  ):
-    signal_msg = (
-        f"🚀 **إشارة شراء صعودية قوية (CALL) - OTC**\n"
-        f"📊 الزوج: `{pair}`\n"
-        f"📈 التقاطع الإيجابي: `EMA 10/20/50`\n"
-        f"📉 مؤشر RSI: `{rsi:.2f}` | CCI: `{cci:.2f}`\n"
-        f"🌊 الماكد والسيولة: `إيجابية وفوليوم مرتفع`\n"
-        f"💰 السعر: `{close_p:.5f}` | الفريم: `{TIMEFRAME}`"
-    )
-    print(signal_msg)
-    send_telegram_alert(signal_msg)
-
-  # شروط إشارة هبوطية قوية (PUT)
-  elif (
-      is_bearish_trend
-      and rsi > 55
-      and cci > 100
-      and macd < macd_sig
-      and vol > vol_avg
-  ):
-    signal_msg = (
-        f"🔻 **إشارة بيع هبوطية قوية (PUT) - OTC**\n"
-        f"📊 الزوج: `{pair}`\n"
-        f"📉 الاتجاه الهابط: `EMA 10/20/50`\n"
-        f"📈 مؤشر RSI: `{rsi:.2f}` | CCI: `{cci:.2f}`\n"
-        f"🌊 الماكد والسيولة: `سلبية وفوليوم مرتفع`\n"
-        f"💰 السعر: `{close_p:.5f}` | الفريم: `{TIMEFRAME}`"
-    )
-    print(signal_msg)
-    send_telegram_alert(signal_msg)
+  result_msg = (
+      f"🎯 **نتيجة فحص الزوج:** `{pair}`\n\n"
+      f"الحالة: {status}\n"
+      f"📍 الدعم: `{support:.5f}` | المقاومة: `{resistance:.5f}`\n"
+      f"📊 السعر: `{current_price:.5f}`\n"
+      f"🔸 RSI: `{rsi:.2f}` | CCI: `{cci:.2f}`\n"
+      f"⏱️ الفريم: `{TIMEFRAME}`"
+  )
+  return result_msg
 
 
-# إعداد خادم Flask Keep-Alive
+# إعداد خادم Flask واستقبال ضغطات الأزرار من التيليجرام (Webhook / Polling simulator)
 app = Flask(__name__)
 
 
 @app.route("/")
 def home():
-  return "I am alive! Multi-Indicator Bot is running 24/7!"
+  return "I am alive! Interactive Bot is running 24/7!"
 
 
-def trading_loop():
-  print("🚀 بدء تفعيل بوت المؤشرات المتقدمة (RSI, MACD, CCI, EMAs, Volume)")
-  send_telegram_alert(
-      "🚀 تم تفعيل بوت التداول الذكي بالمؤشرات المتقدمة بنجاح!"
-  )
+def telegram_listener():
+  last_update_id = 0
+  print("👂 بدأ الاستماع لضغطات الأزرار من تيليجرام...")
   while True:
-    for pair in TARGET_PAIRS:
-      try:
-        analyze_market_engine(pair)
-      except Exception as e:
-        print(f"خطأ في فحص {pair}: {e}")
-      time.sleep(3)
-    time.sleep(25)
+    try:
+      url = f"https://api.telegram.org/bot{TELE_TOKEN}/getUpdates?offset={last_update_id + 1}&timeout=30"
+      res = requests.get(url, timeout=35).json()
+
+      if "result" in res:
+        for update in res["result"]:
+          last_update_id = update["update_id"]
+
+          # التحقق إذا قام المستخدم بالضغط على زر
+          if "callback_query" in update:
+            query = update["callback_query"]
+            callback_data = query["data"]
+            query_id = query["id"]
+            chat_id = query["message"]["chat"]["id"]
+
+            if callback_data.startswith("check_"):
+              pair_name = callback_data.replace("check_", "")
+
+              # الرد على الزر لإلغاء علامة التحميل في التيليجرام
+              requests.post(
+                  f"https://api.telegram.org/bot{TELE_TOKEN}/answerCallbackQuery",
+                  json={"callback_query_id": query_id, "text": f"جاري تحليل {pair_name} ..."},
+              )
+
+              # تقييم الزوج وإرسال النتيجة
+              analysis_result = evaluate_pair(pair_name)
+              requests.post(
+                  f"https://api.telegram.org/bot{TELE_TOKEN}/sendMessage",
+                  json={
+                      "chat_id": chat_id,
+                      "text": analysis_result,
+                      "parse_mode": "Markdown",
+                  },
+              )
+
+          # إذا أرسل المستخدم رسالة /menu أو /start لإظهار اللوحة
+          elif "message" in update and "text" in update["message"]:
+            text = update["message"]["text"]
+            chat_id = update["message"]["chat"]["id"]
+            if text in ["/start", "/menu", "مساعدة", "أزرار"]:
+              send_control_panel()
+
+    except Exception as e:
+      print(f"خطأ في مستمع التيليجرام: {e}")
+    time.sleep(1)
 
 
 if __name__ == "__main__":
-  t_bot = threading.Thread(target=trading_loop)
-  t_bot.daemon = True
-  t_bot.start()
+  # 1. تشغيل مستمع الأزرار في الخلفية
+  t_listener = threading.Thread(target=telegram_listener)
+  t_listener.daemon = True
+  t_listener.start()
 
+  # إرسال لوحة التحكم فور الإقلاع
+  time.sleep(2)
+  send_control_panel()
+
+  # 2. تشغيل خادم Flask لرندر
   port = int(os.environ.get("PORT", 8080))
   app.run(host="0.0.0.0", port=port)

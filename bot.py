@@ -7,7 +7,7 @@ import requests
 from flask import Flask
 
 # ==================== الإعدادات الأساسية ====================
-TELEGRAM_BOT_TOKEN = "893546966:AAHeJ48f1D"
+TELEGRAM_BOT_TOKEN = "8935469966:AAHeJ48flDjsmaHq-zui6HwVMFzCHNtMNpY"
 TELEGRAM_CHAT_ID = "1185014094"
 
 # القائمة الموسعة للمراقبة 24/7 قائمة أزواج الـ OTC

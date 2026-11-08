@@ -1,120 +1,112 @@
-import os
 import time
-import random
 import requests
-from flask import Flask
-from threading import Thread
-from collections import deque
+import alpaca_trade_api as tradeapi
 
-app = Flask(__name__)
+# --- 1. إعدادات الحساب والمفاتيح (ضع مفاتيحك التجريبية هنا) ---
+API_KEY = "https://authx.alpaca.markets/v1/oauth2/token"
+SECRET_KEY = "YOUR_ALPACA_PAPER_SECRET_KEY"
+BASE_URL = "https://paper-api.alpaca.markets"  # بيئة الورقي التجريبية
 
-# إعدادات التوكن ومعرف الدردشة
-TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "8935469966:AAHeJ48flDjsmaHq-zui6HwVMFzCHNtMNpY")
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "1185014094")
+# مفتاح مزود بيانات الخيارات
+POLYGON_API_KEY = "YOUR_POLYGON_API_KEY"
 
-# قائمة أزواج الـ OTC الشاملة والمضافة بالكامل
-PAIRS = [
-    "EUR/USD OTC", 
-    "GBP/USD OTC", 
-    "AUD/USD OTC", 
-    "USD/JPY OTC",
-    "EUR/GBP OTC", 
-    "AUD/CAD OTC", 
-    "USD/CHF OTC", 
-    "NZD/USD OTC",
-    "USD/CAD OTC", 
-    "EUR/JPY OTC"
-]
+api = tradeapi.REST(API_KEY, SECRET_KEY, BASE_URL, api_version='v2')
 
-# تخزين الأسعار لحساب المؤشرات
-price_history = {pair: deque(maxlen=40) for pair in PAIRS}
+# قائمة الأسهم المستهدفة للمراقبة
+WATCH_LIST = ["AAPL", "NVDA", "TSLA", "META", "AMZN", "MSFT"]
 
-def calculate_rsi(prices):
-    if len(prices) < 15:
-        return round(random.uniform(40.0, 60.0), 2)
-    gains, losses = [], []
-    for i in range(1, len(prices)):
-        change = prices[i] - prices[i-1]
-        if change > 0:
-            gains.append(change)
-            losses.append(0)
-        else:
-            gains.append(0)
-            losses.append(abs(change))
-    avg_gain = sum(gains[-14:]) / 14
-    avg_loss = sum(losses[-14:]) / 14
-    if avg_loss == 0:
-        return 100.0
-    rs = avg_gain / avg_loss
-    return round(100 - (100 / (1 + rs)), 2)
-
-def calculate_macd(prices):
-    if len(prices) < 26:
-        return f"Hist: {round(random.uniform(-0.0005, 0.0005), 4)}"
-    ema_12 = sum(prices[-12:]) / 12
-    ema_26 = sum(prices[-26:]) / 26
-    macd_line = ema_12 - ema_26
-    hist = macd_line - (macd_line * 0.9)
-    return f"Hist: {round(hist, 5)}"
-
-def calculate_zigzag_and_levels(prices):
-    if len(prices) < 10:
-        current = prices[-1] if prices else 1.1000
-        return "UP ↗️", f"دعم: {round(current - 0.0020, 5)} | مقاومة: {round(current + 0.0020, 5)}"
-    recent = list(prices)[-15:]
-    peak = max(recent)
-    trough = min(recent)
-    current_price = prices[-1]
-    mid = (peak + trough) / 2
-    zigzag_trend = f"UP ↗️ (قريب القمة)" if current_price >= mid else f"DOWN ↘️ (قريب القاع)"
-    return zigzag_trend, f"دعم: {round(trough, 5)} | مقاومة: {round(peak, 5)}"
-
-def send_telegram_signal(pair_name):
-    last_price = price_history[pair_name][-1] if price_history[pair_name] else round(random.uniform(1.0500, 1.1500), 5)
-    current_price = round(last_price + random.uniform(-0.0008, 0.0008), 5)
-    price_history[pair_name].append(current_price)
+def scan_options_flow():
+    """رصد صفقات الخيارات الضخمة (Whale Sweeps) وتنفيذ الشراء آلياً"""
+    print("🔍 جاري فحص تدفق سيولة عقود الخيارات في السوق الأمريكي...")
     
-    rsi = calculate_rsi(price_history[pair_name])
-    macd = calculate_macd(price_history[pair_name])
-    zigzag, levels = calculate_zigzag_and_levels(price_history[pair_name])
-    
-    signal = "CALL (صعود 🟢)" if rsi < 50 else "PUT (هبوط 🔴)"
-    timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
-    
-    message = (
-        f"📊 **إشارة تداول سحابية (24/7 OTC)**\n"
-        f"🌐 الزوج: `{pair_name}`\n"
-        f"⏱️ الفريم: `1m`\n\n"
-        f"📈 السعر: `{current_price}`\n"
-        f"🔹 RSI: `{rsi}`\n"
-        f"🔸 MACD: `{macd}`\n"
-        f"📉 ZigZag: `{zigzag}`\n"
-        f"🛡️ المستويات: `{levels}`\n\n"
-        f"🎯 القرار: **{signal}**\n"
-        f"🕒 الوقت: `{timestamp}`"
-    )
-    
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}
+    for symbol in WATCH_LIST:
+        try:
+            url = f"https://api.polygon.io/v3/trades/options?ticker=O:{symbol}&limit=20&apiKey={POLYGON_API_KEY}"
+            response = requests.get(url)
+            
+            if response.status_code != 200:
+                continue
+                
+            data = response.json().get('results', [])
+            
+            for trade in data:
+                size = trade.get('size', 0)
+                price = trade.get('price', 0.0)
+                total_value = size * price * 100
+                contract_ticker = trade.get('ticker')
+                
+                # شرط السيولة الكبرى: صفقة خيارات تتجاوز 50,000 دولار
+                if total_value >= 50000:
+                    print(f"🚨 [تدفق سيولة / Whale Sweep] على {symbol} | القيمة: ${total_value:,.2f}")
+                    
+                    # التحقق من عدم تكرار فتح نفس العقد
+                    positions = [p.symbol for p in api.list_positions()]
+                    if contract_ticker in positions:
+                        continue
+                    
+                    print(f"⚡ [تنفيذ آلي] شراء عقد واحد من: {contract_ticker}")
+                    api.submit_order(
+                        symbol=contract_ticker,
+                        qty=1,
+                        side='buy',
+                        type='market',
+                        time_in_force='gtc'
+                    )
+                    print(f"✅ تم فتح الصفقة بنجاح على: {contract_ticker}")
+                    time.sleep(5)
+                    
+        except Exception as e:
+            print(f"خطأ أثناء فحص خيارات {symbol}: {e}")
+
+def manage_open_positions():
+    """إدارة المراكز المفتوحة: بيع 50% عند ربح +50% وإيقاف الخسارة عند -35%"""
     try:
-        requests.post(url, json=payload, timeout=10)
+        positions = api.list_positions()
+        for p in positions:
+            symbol = p.symbol
+            qty = int(p.qty)
+            avg_entry = float(p.avg_entry_price)
+            current_price = float(p.current_price)
+            
+            profit_pct = ((current_price - avg_entry) / avg_entry) * 100
+            
+            # هدف الربح +50% (بيع نصف العقود لتأمين رأس المال)
+            if profit_pct >= 50.0 and qty >= 2:
+                sell_qty = qty // 2
+                print(f"🚨 [ربح +50%] بيع جزئي لـ {sell_qty} عقود من {symbol}")
+                api.submit_order(symbol=symbol, qty=sell_qty, side='sell', type='market', time_in_force='gtc')
+                
+            # وقف الخسارة -35% (إغلاق كامل الصفقة)
+            elif profit_pct <= -35.0:
+                print(f"⚠️ [وقف خسارة -35%] إغلاق كامل الصفقة لـ {symbol}")
+                api.close_position(symbol)
+                
     except Exception as e:
-        print(f"Error sending telegram: {e}")
+        print(f"خطأ في إدارة المراكز: {e}")
 
-def background_market_scanner():
-    print("🚀 بدء تشغيل ماسح سوق الـ OTC السحابي في الخلفية...")
+def run_testing_bot():
+    print("--- 🚀 بدء تشغيل بوت التجربة والاختبار الآلي ---")
+    
     while True:
-        for pair in PAIRS:
-            send_telegram_signal(pair)
-            time.sleep(10)
-        time.sleep(30)
+        try:
+            clock = api.get_clock()
+            if not clock.is_open:
+                print("السوق الأمريكي مغلق حالياً. البوت في وضع الانتظار...")
+                time.sleep(300)
+                continue
+                
+            # 1. فحص السوق واقتناص الفرص
+            scan_options_flow()
+            
+            # 2. إدارة المراكز المفتوحة ومتابعة الأرباح
+            manage_open_positions()
+            
+            print("\nاكتمال دورة الفحص والإدارة. الانتظار للدورة القادمة...\n")
+            time.sleep(120)  # فحص كل دقيقتين
+            
+        except Exception as e:
+            print(f"خطأ في الحلقة الرئيسية: {e}")
+            time.sleep(30)
 
-Thread(target=background_market_scanner, daemon=True).start()
-
-@app.route('/')
-def home():
-    return "Cloud OTC Trading Bot is Live and Running 24/7!"
-
-if __name__ == '__main__':
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host='0.0.0.0', port=port)
+if __name__ == "__main__":
+    run_testing_bot()
